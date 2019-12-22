@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+		<meta charset="utf-8" />
+        <title>LED-контроллер</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script src="lib/jq.js"></script>
+        <script src="lib/jqm.js"></script>
+        <link href="jqm.css" rel="stylesheet" />
+        <link href="jqmt.css" rel="stylesheet" />
+		<script>
+            var sheduleCount;
+            var ipValue;
+            var connection;
+            function setValueInt(option, value)
+            {
+                $(option).val(value).slider('refresh');
+            }
+            function setValueBool(option, value)
+            {
+                console.log("need to set bool value to ", value);
+                if ($(value) == "true")
+                {
+                    $(option).prop("checked", value).checkboxradio('refresh');
+                } else
+                {
+                    $(option).removeAttr('checked')
+                }
+            }
+            function setValueTriple(option, value)
+            {
+				var regexp = new RegExp("(.*);(.*);(.*)", "i");
+				var tripleExist = regexp.test(value);
+				if (!tripleExist)
+				{
+					return;
+				}
+				regexp.lastInex = 0;
+				var result = regexp.exec(value);
+				var rSlider = $(option).find('#r');
+				var gSlider = $(option).find('#g');
+				var bSlider = $(option).find('#b');
+				$(rSlider).val(result[1]).slider('refresh');
+				$(gSlider).val(result[2]).slider('refresh');
+				$(bSlider).val(result[3]).slider('refresh');
+            }
+            function setValuePicker(option, value)
+            {
+				var regexp = new RegExp("(.*);(.*);(.*)", "i");
+				var pickerExist = regexp.test(value);
+				if (!pickerExist)
+				{
+					return;
+				}
+				regexp.lastInex = 0;
+				var result = regexp.exec(value);
+				var rHex = parseInt(result[1], 10).toString(16);
+				if (rHex.length == 1)
+                    rHex = "0"+rHex;
+				var gHex = parseInt(result[2], 10).toString(16);
+                if (gHex.length == 1)
+                    gHex = "0"+gHex;
+				var bHex = parseInt(result[3], 10).toString(16);
+                if (bHex.length == 1)
+                    bHex = "0"+bHex;
+				$(option).val("#" + rHex + gHex + bHex);
+            }
+            function setProperty(section, option, value)
+            {
+                disableHandler = true;
+				if ($(option).attr('type') == "number")
+					setValueInt(option, value);
+				else if ($(option).attr('type') == "checkbox")
+				{
+                    console.log($(section).attr('id'), "->", $(option).attr('id'), ":", $(option).attr('type'), ":", $(option).attr('name'));
+					setValueBool(option, value);
+                }
+				else if ($(option).attr('type') == "color")
+					setValuePicker(option, value);
+				else 
+					setValueTriple(option, value);
+                disableHandler = false;
+            }
+            function createWebSocket(ipAddress)
+            {
+                ipValue = 'ws://' + ipAddress + ':81/';
+                connection = new WebSocket(ipValue, ['arduino']);
+                connection.onopen = function (event)
+                {
+                    console.log("Websocket started, ip address is ", ipAddress); 
+                };          
+                connection.onerror = function (error) 
+                {    
+                    console.log('WebSocket Error ', error);
+                };
+                connection.onmessage = function (msg) 
+                {
+                    console.log('Server: ', msg.data);
+                    var regexp = new RegExp("(.*):(.*):(.*)", "i");
+                    var valueExist = regexp.test(msg.data);
+                    if (!valueExist)
+                        return;
+                    regexp.lastInex = 0;
+                    var result = regexp.exec(msg.data);
+					var section = document.getElementById(result[1]);
+					var optionName = "#"+result[2];
+                    if (result[2].toString() == "reverse")
+                        optionName = "#" + result[1] + "Rev";
+                    if (result[2].toString() == "multiColor")
+                        optionName = "#" + result[1] + "MC";
+					var option = $(section).find(optionName);
+                    setProperty(section, option, result[3]);
+                };
+            }
+            function wsConnect()
+            {
+                $.get("ready");
+                var text = document.getElementById('ip').value;
+                createWebSocket(text);
+                console.log("server IP address changed to: "+text);
+            }
+            $(window).load(function() {
+                console.log("location.hostname is ", location.hostname);
+                sheduleCount = 0;
+                addShedule("pulse");
+                if (location.hostname == "")
+                {
+                    console.log("hostname is empty (file loaded from disk)");
+                    $("#IPAddressBox").show();
+                } else
+                {
+                    console.log("hostname is defined (file loaded from net)");
+                    $("#IPAddressBox").hide();
+                    createWebSocket(location.hostname);
+                }
+            });
+			function someValue(min, max) 
+			{
+				var rand = min - 0.5 + Math.random() * (max - min + 1)
+				rand = Math.round(rand);
+				return rand;
+			}
+			var disableHandler = false;
+			var expandingItem = '';
+			function hexToTripleValue(hex) 
+			{
+				var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+				var triple = parseInt(result[1], 16).toString(10) + ';' + parseInt(result[2], 16).toString(10) + ';' + parseInt(result[3], 16).toString(10);
+				return triple;
+			}			
+			function sendColor(pickerID)
+			{
+                if (disableHandler)
+                    return;
+				var clr = $(pickerID).attr("value");
+				var tripleValue = hexToTripleValue(clr);
+				var rgb = '$' + $(pickerID).attr("id") + ':' + tripleValue;
+				console.log(rgb); 
+				connection.send(rgb);
+			}
+			function sendGroupColor(containerID) 
+			{  
+				if (disableHandler)
+					return;
+				var gridvar = $(containerID).parent().parent().parent();
+				var r = parseInt($(gridvar).find('#r').val()).toString(10);
+				var g = parseInt($(gridvar).find('#g').val()).toString(10);
+				var b = parseInt($(gridvar).find('#b').val()).toString(10);
+				console.log('R = ', r, ' G = ', g, ' B = ', b);
+				var rgb = '$' + $(gridvar).attr("id") + ':' + r + ';' + g + ';' + b;
+				console.log(rgb); 
+				connection.send(rgb);
+			}
+			function generate(containerID) 
+			{  
+				disableHandler = true;
+				var gridvar = $(containerID).parent().parent().parent();
+				var rSlider = $(gridvar).find('#r');
+				var gSlider = $(gridvar).find('#g');
+				var bSlider = $(gridvar).find('#b');
+				console.log("slider id is ", $(rSlider).attr("type"));
+				var r = someValue(parseInt($(rSlider).attr("min")), parseInt($(rSlider).attr("max")));
+				var g = someValue(parseInt($(gSlider).attr("min")), parseInt($(gSlider).attr("max")));
+				var b = someValue(parseInt($(bSlider).attr("min")), parseInt($(bSlider).attr("max")));
+				console.log('Generated! R = ', r, ' G = ', g, ' B = ', b);
+				$(rSlider).val(r).slider('refresh');
+				console.log("Red done: ", r);
+				$(gSlider).val(g).slider('refresh');
+				console.log("Green done: ", g);
+				disableHandler = false;
+				$(bSlider).val(b).slider('refresh');
+				console.log("Blue done: ", b);
+			}
+			function sendValue(containerID) 
+			{  
+                if (disableHandler)
+                    return;
+				var sval = $(containerID).val().toString(10);
+				var snd = '@' + $(containerID).attr("id") + ':' + sval;
+				console.log(snd); 
+				connection.send(snd);
+			}
+            function sendChecked(itemID) 
+            {  
+                if (disableHandler)
+                    return;
+                disableHandler = true;
+                $(itemID).prop('checked', $(itemID).checked);
+                var chk = ($(itemID).prop("checked")) ? 1 : 0;
+                console.log("checked is ", $(itemID).prop("checked"));
+                var grp = '@' + $(itemID).attr("id") + ':' + chk;
+                disableHandler = false;
+                connection.send(grp);
+            }
+			function prepareExpand(containerID) 
+			{  
+				expandingItem = '';
+				var hidden = $(containerID).find('.ui-collapsible-content').attr("aria-hidden");
+				if (hidden == 'false') return;
+				expandingItem = $(containerID).attr("id");
+			}
+			function expandGroup(containerID) 
+			{  
+				if (expandingItem != $(containerID).attr("id")) return;
+				var hidden = $(containerID).find('.ui-collapsible-content').attr("aria-hidden");
+				if (hidden == 'false') return;
+				var grp = '#' + $(containerID).attr("id");
+				connection.send(grp);
+			}
+			function powerOff() {
+				var toSend = "#off";
+				connection.send(toSend); 
+			};
+			function dump() {
+				var toSend = "?";
+				connection.send(toSend); 
+			};
+
+
+		</script>
+		<script>
+			$(document).bind('mobileinit',function(){
+				$.mobile.changePage.defaults.changeHash = false;
+				$.mobile.hashListeningEnabled = false;
+				$.mobile.pushStateEnabled = false;
+			});
+		</script> 	        
+				
+      </head>  
+    <body>
+
+        <div data-role="page" id="page1">
+            <div data-role="fieldcontain" id="information">
+                НЕ ПОДКЛЮЧЕН
+            </div>
+			<div data-role="collapsible-set">
+				<div data-role="content">
+					<div data-role="collapsible" id="waves" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+						<h1>Волны</h1>
+						<div class="div-widget" >
+							<span>Цвет максимума</span>
+							<div class="ui-grid-c" id="colorMax">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+						</div>
+						<hr/>
+						<div class="div-widget" >
+							<span>Цвет минимума</span>
+							<div class="ui-grid-c" id="colorMin">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+						</div>
+						<hr/>
+						<div class="div-widget" >
+							<span>Скорость движения волны</span>
+							<div class="ui-grid-c" id="speed">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="-100" max="100" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="-100" max="100" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="-100" max="100" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+						</div>
+						<hr/>
+						<div class="div-widget" >
+							<span>Количество волн</span>
+							<div class="ui-grid-c" id="count">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="1" min="1" max="10" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="1" min="1" max="10" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="1" min="1" max="10" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+						</div>
+					</div><br>
+                    <div data-role="collapsible" id="rainbow" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+                        <h1>Радуга</h1>
+                        <div class="inside">
+                        <div class="div-widget">
+                            <div class="ui-grid-a" id="color">
+                                <div class="ui-block-a">
+                                    <span>Скорость движения</span>
+                                    <div data-role="fieldcontain" id="slider1">
+                                        <input type="range"  id="speed" value="0" min="-100" max="100" data-highlight="true" onchange="sendValue(this)" />
+                                    </div>
+                                </div>
+                                <div class="ui-block-b">
+                                    <span>Количество точек</span>
+                                    <div data-role="fieldcontain" id="slider1">
+                                        <input type="range"  id="count" value="2" min="2" max="10" data-highlight="true" onchange="sendValue(this)" />
+                                    </div>
+                                </div>
+                            </div>
+                            <span>Ключевые точки</span>
+                            <div class="ui-grid-a" id="points">
+                                <div class="ui-block-a">
+                                    <div class="ui-grid-d">
+                                        <div class="ui-block-a">
+                                            <input type="color" id="color0" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-b">
+                                            <input type="color" id="color1" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-c">
+                                            <input type="color" id="color2" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-d">
+                                            <input type="color" id="color3" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-e">
+                                            <input type="color" id="color4" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="ui-block-b">
+                                    <div class="ui-grid-d">
+                                        <div class="ui-block-a">
+                                            <input type="color" id="color5" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-b">
+                                            <input type="color" id="color6" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-c">
+                                            <input type="color" id="color7" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-d">
+                                            <input type="color" id="color8" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-e">
+                                            <input type="color" id="color9" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        <input type="checkbox" id="rainbowRev" onchange="sendChecked(this)" />
+                        <label for="rainbowRev" >Случайный реверс</label>
+                       </div>
+                       </div>
+                    </div><br>
+                    <div data-role="collapsible" id="lines" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+                        <h1>Линии</h1>
+                        <div class="inside">
+                        <div class="div-widget">
+                            <div class="ui-grid-a" id="color">
+                                <div class="ui-block-a">
+                                    <span>Скорость движения</span>
+                                    <div data-role="fieldcontain" id="slider1">
+                                        <input type="range"  id="speed" value="0" min="-100" max="100" data-highlight="true" onchange="sendValue(this)" />
+                                    </div>
+                                </div>
+                                <div class="ui-block-b">
+                                    <span>Количество точек</span>
+                                    <div data-role="fieldcontain" id="slider1">
+                                        <input type="range"  id="count" value="2" min="2" max="10" data-highlight="true" onchange="sendValue(this)" />
+                                    </div>
+                                </div>
+                            </div>
+                            <span>Ключевые точки</span>
+                            <div class="ui-grid-a" id="points">
+                                <div class="ui-block-a">
+                                    <div class="ui-grid-d">
+                                        <div class="ui-block-a">
+                                            <input type="color" id="color0" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-b">
+                                            <input type="color" id="color1" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-c">
+                                            <input type="color" id="color2" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-d">
+                                            <input type="color" id="color3" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-e">
+                                            <input type="color" id="color4" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="ui-block-b">
+                                    <div class="ui-grid-d">
+                                        <div class="ui-block-a">
+                                            <input type="color" id="color5" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-b">
+                                            <input type="color" id="color6" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-c">
+                                            <input type="color" id="color7" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-d">
+                                            <input type="color" id="color8" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                        <div class="ui-block-e">
+                                            <input type="color" id="color9" onchange="sendColor(this)" value="#000000">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="checkbox" id="linesRev" />
+                        <label for="linesRev" onmouseup="sendChecked(this)" >Случайный реверс</label>
+                        <input type="checkbox" id="linesMC"/>
+                        <label for="linesMC" onmouseup="sendChecked(this)" >Разноцветные линии</label>
+                        </div>
+                    </div><br>
+					<div data-role="collapsible" id="snowflake" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+						<h1>Снежинки</h1>
+						<div class="inside">
+						<div class="div-widget">
+							<div class="ui-grid-b">
+								<div class="ui-block-a">
+									<span>Размер снежинок</span>
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range"  id="flakeSize" value="0" min="0" max="10" data-highlight="true" onchange="sendValue(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b">
+									<span>Частота появления</span>
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range"  id="count" value="1" min="1" max="100" data-highlight="true" onchange="sendValue(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c">
+									<span>Скорость таяния</span>
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range"  id="fading" value="1" min="1" max="100" data-highlight="true" onchange="sendValue(this)" />
+									</div>
+								</div>
+							</div>
+							<hr /><br>
+							<span>Цвет снежинок</span>
+							<div class="ui-grid-c" id="color">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+						</div>
+						<input type="checkbox" id="snowflakeMC"/>
+						<label for="snowflakeMC" onmouseup="sendChecked(this)" >Разноцветные снежинки</label>
+						</div>
+					</div><br>
+					<div data-role="collapsible" id="stroboscope" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+						<h1>Стробоскоп</h1>
+						<div class="inside">
+						<div class="div-widget">
+							<div class="ui-grid-a">
+								<div class="ui-block-a">
+									<span>Частота появления</span>
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range"  id="count" value="1" min="1" max="100" data-highlight="true" onchange="sendValue(this)" />
+									</div>
+								</div>
+							</div>
+							<hr /><br>
+							<span>Цвет вспышек</span>
+							<div class="ui-grid-c" id="color">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+							
+						</div>
+						<input type="checkbox" id="stroboscopeMC"/>
+						<label for="stroboscopeMC" onmouseup="sendChecked(this)" >Разноцветные вспышки</label>
+						</div>
+					</div><br>
+					<div data-role="collapsible" id="intersects" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+                        <h1>Пересечения</h1>
+                        <div class="inside">
+                        <div class="div-widget">
+                            <div class="ui-grid-a">
+                                <div class="ui-block-a">
+                                    <span>Количество точек</span>
+                                    <div data-role="fieldcontain" id="slider1">
+                                        <input type="range"  id="count" value="2" min="2" max="8" data-highlight="true" onchange="sendValue(this)" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        </div>
+						</div><br>
+					<div data-role="collapsible" id="snake" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+						<h1>Змейка</h1>
+						<div class="inside">
+						<div class="div-widget">
+							<div class="ui-grid-a">
+								<div class="ui-block-a">
+									<span>Количество змеек</span>
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range"  id="count" value="1" min="1" max="10" data-highlight="true" onchange="sendValue(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b">
+									<span>Скорость</span>
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range"  id="speed" value="1" min="1" max="100" data-highlight="true" onchange="sendValue(this)" />
+									</div>
+								</div>
+							</div>
+							<hr><br>
+							<span>Цвет змейки</span>
+							<div class="ui-grid-c" id="color">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+							
+						</div>
+						<hr>
+						<input type="checkbox" id="snakeMC" />
+						<label for="snakeMC" onmouseup="sendChecked(this)" >Разноцветные змейки</label>
+						<input type="checkbox" id="snakeRev" />
+						<label for="snakeRev" onmouseup="sendChecked(this)" >Случайный реверс</label>
+						</div>
+					</div><br>
+					<div data-role="collapsible" id="pulse" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+						<h1>Пульс</h1>
+						<div class="inside">
+						<div class="div-widget" >
+							
+							<span>Цвет максимума</span>
+							<div class="ui-grid-c" id="colorMax">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+							
+						</div>
+						<hr><br>
+						<div class="div-widget" >
+							<span>Цвет минимума</span>
+							<div class="ui-grid-c" id="colorMin">
+								<div class="ui-block-a slider-red">
+									<div data-role="fieldcontain" id="slider1">
+										<input type="range" id="r" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-b slider-green">
+									<div data-role="fieldcontain" id="slider2">
+										<input type="range" id="g" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-c slider-blue">
+									<div data-role="fieldcontain" id="slider3">
+										<input type="range" id="b" value="0" min="0" max="255" data-highlight="true" onchange="sendGroupColor(this)" />
+									</div>
+								</div>
+								<div class="ui-block-d">
+									<a data-role="button" id="random" onclick="generate(this)" data-inline="true">Придумать</a>
+								</div>
+							</div>
+							
+						</div>
+						<hr><br>
+						<div class="ui-grid-a div-widget">
+							<div class="ui-block-a">
+								<span>Скорость пульсаций</span>
+								<div data-role="fieldcontain" id="slider1">
+									<input type="range"  id="speed" value="0" min="0" max="100" data-highlight="true" onchange="sendValue(this)" />
+								</div>
+							</div>
+						</div>
+						</div>
+					</div><br>
+					<div data-role="collapsible" id="cycle" onmousedown="prepareExpand(this)" onmouseup="expandGroup(this)">
+						<h1>Автосмена режимов</h1>
+						<div class="inside">
+						<div class="ui-grid-a div-widget">
+							<div class="ui-block-a">
+								<span>Период изменения</span>
+								<div data-role="fieldcontain" id="slider1">
+									<input type="range"  id="period" value="60" min="10" max="600" data-highlight="true" onchange="sendValue(this)" />
+								</div>
+							</div>
+							<div class="ui-block-b">
+								<span>Скорость затухания</span>
+								<div data-role="fieldcontain" id="slider1">
+									<input type="range"  id="fading" value="0" min="0" max="100" data-highlight="true" onchange="sendValue(this)" />
+								</div>
+							</div>
+						</div>
+						<hr>
+						<input type="checkbox" id="isRandom" />
+						<label for="isRandom" onmouseup="sendChecked(this)" >Случайный перебор</label>
+						</div>
+					</div><br>
+                    <a data-role="button" id="powerOff" onclick="powerOff()" data-inline="true">Отключить освещение</a>
+
+					<div data-role="fieldcontain" id="IPAddressBox">
+						<label for="text1">Адрес контроллера</label>
+						<input type="text" id="ip" value="192.168.0.100" onblur='wsConnect()' />
+					</div><br>
+				</div>
+			</div>
+		</div>
+        <div id="overlay"></div>
+    </body>
+</html>
